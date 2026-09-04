@@ -1,9 +1,17 @@
 import { google } from "googleapis";
 import fs from "fs";
 
-function getAuth() {
+function getCredentials() {
+  // עדיף: תוכן ה-JSON ישירות ממשתנה סביבה (נוח יותר להעלאה מהנייד)
+  const content = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT;
+  if (content) return JSON.parse(content);
+  // חלופה: קובץ בדיסק
   const keyPath = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  const credentials = JSON.parse(fs.readFileSync(keyPath, "utf8"));
+  return JSON.parse(fs.readFileSync(keyPath, "utf8"));
+}
+
+function getAuth() {
+  const credentials = getCredentials();
   return new google.auth.GoogleAuth({
     credentials,
     scopes: [
@@ -38,15 +46,40 @@ export async function createCalendarEvent({ title, dateISO, timeHHMM, notes }) {
   return res.data.htmlLink;
 }
 
-export async function searchDriveFiles(query) {
+/** מאתר את תיקיית הלקוח בתוך תיקיית השורש (אורוןG), לפי שם. */
+async function findClientFolder(drive, clientName) {
+  const rootId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  if (!clientName || !rootId) return null;
+
+  const res = await drive.files.list({
+    q: `'${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and name contains '${clientName.replace(/'/g, "")}' and trashed = false`,
+    fields: "files(id, name)",
+    pageSize: 3,
+  });
+  return res.data.files?.[0] || null;
+}
+
+/**
+ * מחפש קבצים בדרייב - קודם מנסה לאתר תיקיית לקוח ספציפית, ואז מחפש בתוכה
+ * גם לפי שם קובץ וגם לפי תוכן (fullText). אם לא צוין לקוח, מחפש בכל תיקיית השורש.
+ */
+export async function searchDriveFiles({ query, clientName }) {
   const auth = getAuth();
   const drive = google.drive({ version: "v3", auth });
 
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  const rootId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  let parentId = rootId;
+
+  if (clientName) {
+    const clientFolder = await findClientFolder(drive, clientName);
+    if (clientFolder) parentId = clientFolder.id;
+  }
+
+  const safeQuery = query.replace(/'/g, "");
   const q = [
-    `name contains '${query.replace(/'/g, "")}'`,
+    `(name contains '${safeQuery}' or fullText contains '${safeQuery}')`,
     "trashed = false",
-    folderId ? `'${folderId}' in parents` : null,
+    parentId ? `'${parentId}' in parents` : null,
   ]
     .filter(Boolean)
     .join(" and ");
