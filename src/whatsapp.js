@@ -1,5 +1,6 @@
 import baileysPkg from "@whiskeysockets/baileys";
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = baileysPkg;
+const makeWASocket = baileysPkg.default ?? baileysPkg.makeWASocket ?? baileysPkg;
+const { useMultiFileAuthState, DisconnectReason } = baileysPkg;
 import qrcode from "qrcode-terminal";
 import pino from "pino";
 
@@ -44,7 +45,7 @@ export async function startWhatsApp(onMessage) {
     if (type !== "notify") return;
     for (const msg of messages) {
       if (!msg.message || msg.key.fromMe) continue;
-      const remoteJid = msg.key.remoteJid; // מזהה הצ'אט - אם מסתיים ב-@g.us זו קבוצה
+      const remoteJid = msg.key.remoteJid;
       const isGroup = remoteJid?.endsWith("@g.us");
       const text =
         msg.message.conversation ||
