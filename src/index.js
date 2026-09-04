@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import QRCode from "qrcode";
 import { startWhatsApp, sendToChat, listGroups, getCurrentQR } from "./whatsapp.js";
-import { handleIncomingMessage } from "./taskHandler.js";
+import { handleIncomingMessage, logRawMessage } from "./taskHandler.js";
 import { startReminderLoop, startDailySummary, startWeeklySummary } from "./scheduler.js";
 
 const TRIGGER_WORD = "גימי";
@@ -13,6 +13,9 @@ async function main() {
     if (isGroup && officeGroupId && chatId !== officeGroupId) return;
 
     const trimmed = text.trim();
+
+    // רישום שקט של כל הודעה בקבוצה, בלי AI - כדי שנוכל לחזור אליה מאוחר יותר עם "גימי"
+    logRawMessage({ senderNumber, text: trimmed });
 
     // פקודת עזר חד-פעמית - עובדת גם בלי מילת ההפעלה
     if (trimmed === "/קבוצות") {
@@ -27,7 +30,6 @@ async function main() {
     // הבוט מגיב רק אם ההודעה מתחילה במילת ההפעלה "גימי"
     if (!trimmed.startsWith(TRIGGER_WORD)) return;
 
-    // מסירים את מילת ההפעלה מתחילת ההודעה לפני שמעבירים הלאה
     const actualText = trimmed.slice(TRIGGER_WORD.length).replace(/^[\s,:.-]+/, "").trim();
     if (!actualText) {
       await sendToChat(chatId, "כן? במה אפשר לעזור?");
