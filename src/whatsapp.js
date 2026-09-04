@@ -5,11 +5,15 @@ const baileysPkg = require("@whiskeysockets/baileys");
 const makeWASocket = baileysPkg.default ?? baileysPkg;
 const { useMultiFileAuthState, DisconnectReason } = baileysPkg;
 
-import qrcode from "qrcode-terminal";
 import pino from "pino";
 
 let sock = null;
 let onMessageHandler = null;
+let currentQR = null;
+
+export function getCurrentQR() {
+  return currentQR;
+}
 
 export async function startWhatsApp(onMessage) {
   onMessageHandler = onMessage;
@@ -26,8 +30,8 @@ export async function startWhatsApp(onMessage) {
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
-      console.log("\n📱 סרוק את קוד ה-QR הזה מהמספר הנוסף (וואטסאפ > מכשירים מקושרים):\n");
-      qrcode.generate(qr, { small: true });
+      currentQR = qr;
+      console.log("\n📱 QR חדש זמין. פתח את /qr בדפדפן כדי לסרוק אותו כתמונה.\n");
     }
     if (connection === "close") {
       const shouldReconnect =
@@ -35,6 +39,7 @@ export async function startWhatsApp(onMessage) {
       console.log("החיבור נסגר. מתחבר מחדש:", shouldReconnect);
       if (shouldReconnect) startWhatsApp(onMessageHandler);
     } else if (connection === "open") {
+      currentQR = null;
       console.log("✅ מחובר לוואטסאפ בהצלחה.");
     }
   });
