@@ -5,12 +5,17 @@ import { startWhatsApp, sendToChat, listGroups, getCurrentQR } from "./whatsapp.
 import { handleIncomingMessage } from "./taskHandler.js";
 import { startReminderLoop, startDailySummary, startWeeklySummary } from "./scheduler.js";
 
+const TRIGGER_WORD = "גימי";
+
 async function main() {
   await startWhatsApp(async ({ chatId, isGroup, senderNumber, text }) => {
     const officeGroupId = process.env.OFFICE_GROUP_ID;
     if (isGroup && officeGroupId && chatId !== officeGroupId) return;
 
-    if (text.trim() === "/קבוצות") {
+    const trimmed = text.trim();
+
+    // פקודת עזר חד-פעמית - עובדת גם בלי מילת ההפעלה
+    if (trimmed === "/קבוצות") {
       const groups = await listGroups();
       const list = Object.entries(groups)
         .map(([id, meta]) => `${meta.subject}: ${id}`)
@@ -19,9 +24,19 @@ async function main() {
       return;
     }
 
+    // הבוט מגיב רק אם ההודעה מתחילה במילת ההפעלה "גימי"
+    if (!trimmed.startsWith(TRIGGER_WORD)) return;
+
+    // מסירים את מילת ההפעלה מתחילת ההודעה לפני שמעבירים הלאה
+    const actualText = trimmed.slice(TRIGGER_WORD.length).replace(/^[\s,:.-]+/, "").trim();
+    if (!actualText) {
+      await sendToChat(chatId, "כן? במה אפשר לעזור?");
+      return;
+    }
+
     await handleIncomingMessage({
       senderNumber,
-      text,
+      text: actualText,
       sendReply: (reply) => sendToChat(chatId, reply),
     });
   });
