@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_by TEXT,
   title TEXT NOT NULL,
   details TEXT,
-  status TEXT DEFAULT 'open',       -- open | done | cancelled
-  due_date TEXT,                     -- ISO date, nullable
-  assigned_to TEXT,                  -- שם חופשי, נלמד מהטקסט
+  status TEXT DEFAULT 'open',
+  due_date TEXT,
+  assigned_to TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   completed_at TEXT
 );
@@ -19,10 +19,20 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS reminders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id INTEGER,
-  remind_at TEXT NOT NULL,           -- ISO datetime
+  remind_at TEXT NOT NULL,
   sent INTEGER DEFAULT 0,
   message TEXT,
   FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
+
+CREATE TABLE IF NOT EXISTS charges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_by TEXT,
+  charge_type TEXT,
+  description TEXT,
+  amount REAL,
+  client_name TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS message_log (
@@ -33,7 +43,6 @@ CREATE TABLE IF NOT EXISTS message_log (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
--- סיכום שיחה מתגלגל, כדי לא לשלוח היסטוריה מלאה ל-Claude בכל פעם
 CREATE TABLE IF NOT EXISTS conversation_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   rolling_summary TEXT DEFAULT ''
@@ -54,12 +63,19 @@ export function completeTask(taskId) {
   db.prepare(`UPDATE tasks SET status = 'done', completed_at = datetime('now') WHERE id = ?`).run(taskId);
 }
 
+export function removeTaskByTitleMatch(titleFragment) {
+  const task = db.prepare(`SELECT * FROM tasks WHERE status = 'open' AND title LIKE ?`).get(`%${titleFragment}%`);
+  if (!task) return null;
+  db.prepare(`UPDATE tasks SET status = 'cancelled' WHERE id = ?`).run(task.id);
+  return task;
+}
+
 export function listOpenTasks() {
   return db.prepare(`SELECT * FROM tasks WHERE status = 'open' ORDER BY due_date IS NULL, due_date ASC`).all();
 }
 
 export function listTasksSince(isoDate) {
-  return db.prepare(`SELECT * FROM tasks WHERE created_at >= ? ORDER BY created_at ASC`).all(isoDate);
+  return db.prepare(`SELECT * FROM tasks WHERE created_at >= ? AND status != 'cancelled' ORDER BY created_at ASC`).all(isoDate);
 }
 
 export function addReminder({ taskId, remindAt, message }) {
@@ -74,8 +90,25 @@ export function markReminderSent(id) {
   db.prepare(`UPDATE reminders SET sent = 1 WHERE id = ?`).run(id);
 }
 
+export function addCharge({ createdBy, chargeType, description, amount, clientName }) {
+  const stmt = db.prepare(`
+    INSERT INTO charges (created_by, charge_type, description, amount, client_name)
+    VALUES (@createdBy, @chargeType, @description, @amount, @clientName)
+  `);
+  const info = stmt.run({ createdBy, chargeType: chargeType || null, description: description || null, amount: amount || null, clientName: clientName || null });
+  return info.lastInsertRowid;
+}
+
+export function listChargesSince(isoDate) {
+  return db.prepare(`SELECT * FROM charges WHERE created_at >= ? ORDER BY created_at DESC`).all(isoDate);
+}
+
 export function logMessage({ sender, body, intent }) {
   db.prepare(`INSERT INTO message_log (sender, body, intent) VALUES (?, ?, ?)`).run(sender, body, intent);
+}
+
+export function getMessagesSince(isoDate) {
+  return db.prepare(`SELECT * FROM message_log WHERE created_at >= ? ORDER BY created_at ASC`).all(isoDate);
 }
 
 export function getRollingSummary() {
