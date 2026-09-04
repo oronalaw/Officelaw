@@ -1,18 +1,16 @@
-import baileysPkg from "@whiskeysockets/baileys";
-const makeWASocket = baileysPkg.default ?? baileysPkg.makeWASocket ?? baileysPkg;
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const baileysPkg = require("@whiskeysockets/baileys");
+
+const makeWASocket = baileysPkg.default ?? baileysPkg;
 const { useMultiFileAuthState, DisconnectReason } = baileysPkg;
+
 import qrcode from "qrcode-terminal";
 import pino from "pino";
 
 let sock = null;
 let onMessageHandler = null;
 
-/**
- * מפעיל חיבור לוואטסאפ עם המספר הנוסף.
- * בהרצה ראשונה יוצג QR code בטרמינל - יש לסרוק אותו מהמכשיר עם המספר הנוסף
- * (וואטסאפ > מכשירים מקושרים > קישור מכשיר). לאחר מכן החיבור נשמר בתיקיית auth_info
- * ולא צריך לסרוק שוב, אלא אם מתנתקים.
- */
 export async function startWhatsApp(onMessage) {
   onMessageHandler = onMessage;
   const { state, saveCreds } = await useMultiFileAuthState("auth_info");
@@ -76,13 +74,12 @@ export async function sendToChat(chatId, text) {
 export async function sendToOfficeGroup(text) {
   const groupId = process.env.OFFICE_GROUP_ID;
   if (!groupId) {
-    console.warn("OFFICE_GROUP_ID עדיין לא מוגדר. הרץ listGroups() כדי למצוא את המזהה, ראה README.");
+    console.warn("OFFICE_GROUP_ID עדיין לא מוגדר.");
     return;
   }
   return sendToChat(groupId, text);
 }
 
-/** עוזר חד-פעמי: מדפיס את כל הקבוצות שהמספר חבר בהן, כדי למצוא את ה-ID של קבוצת המשרד. */
 export async function listGroups() {
   if (!sock) throw new Error("WhatsApp socket not initialized yet");
   const groups = await sock.groupFetchAllParticipating();
