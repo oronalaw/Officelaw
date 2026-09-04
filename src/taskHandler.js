@@ -1,14 +1,21 @@
-import { addTask, addReminder, completeTask, listOpenTasks, listTasksSince, logMessage } from "./db.js";
-import { classifyMessage, handleComplexRequest, generateSummary } from "./ai.js";
+import {
+  addTask,
+  addReminder,
+  completeTask,
+  removeTaskByTitleMatch,
+  listOpenTasks,
+  listTasksSince,
+  addCharge,
+  listChargesSince,
+  getMessagesSince,
+  logMessage,
+} from "./db.js";
+import { classifyMessage, handleComplexRequest, generateSummary, summarizeRecentMessages, generateChargeSummary } from "./ai.js";
 import { createCalendarEvent, searchDriveFiles } from "./google.js";
-
-const NAME_BY_NUMBER = {}; // ימולא מ-.env NAME_MAP אם תרצה, ראו README
 
 export async function handleIncomingMessage({ senderNumber, text, sendReply }) {
   const authorized = (process.env.AUTHORIZED_NUMBERS || "").split(",").map((s) => s.trim());
-  if (!authorized.includes(senderNumber)) {
-    return; // מתעלם משולחים לא מורשים, לא צורך טוקן בכלל
-  }
+  if (!authorized.includes(senderNumber)) return;
 
   const classification = await classifyMessage(text);
   logMessage({ sender: senderNumber, body: text, intent: classification.intent });
@@ -39,7 +46,17 @@ export async function handleIncomingMessage({ senderNumber, text, sendReply }) {
         completeTask(match.id);
         await sendReply(`✔️ סומן כבוצע: "${match.title}"`);
       } else {
-        await sendReply(`לא מצאתי משימה פתוחה שמתאימה ל"${classification.title}". אפשר לשלוח /משימות לרשימה המלאה.`);
+        await sendReply(`לא מצאתי משימה פתוחה שמתאימה ל"${classification.title}".`);
+      }
+      break;
+    }
+
+    case "remove_task": {
+      const removed = removeTaskByTitleMatch(classification.title || "");
+      if (removed) {
+        await sendReply(`🗑️ הוסרה משימה: "${removed.title}"`);
+      } else {
+        await sendReply(`לא מצאתי משימה פתוחה שמתאימה ל"${classification.title}" להסרה.`);
       }
       break;
     }
@@ -49,24 +66,59 @@ export async function handleIncomingMessage({ senderNumber, text, sendReply }) {
         await sendReply(`חסר תאריך לאירוע. אפשר לשלוח שוב עם תאריך מדויק?`);
         break;
       }
-      const link = await createCalendarEvent({
-        title: classification.title || text,
-        dateISO: classification.due_date,
-        timeHHMM: classification.due_time,
-        notes: text,
-      });
-      await sendReply(`📅 נוסף ליומן: "${classification.title || text}"\n${link}`);
+      try {
+        const link = await createCalendarEvent({
+          title: classification.title || text,
+          dateISO: classification.due_date,
+          timeHHMM: classification.due_time,
+          notes: text,
+        });
+        await sendReply(`📅 נוסף ליומן: "${classification.title || text}"\n${link}`);
+      } catch (err) {
+        console.error(err);
+        await sendReply(`⚠️ לא הצלחתי להוסיף ליומן - כנראה חסר חיבור לגוגל. בדוק עם המנהל.`);
+      }
       break;
     }
 
     case "drive_request": {
-      const files = await searchDriveFiles(classification.title || text);
-      if (files.length === 0) {
-        await sendReply(`לא מצאתי מסמכים שתואמים ל"${classification.title || text}" בדרייב המשרדי.`);
-      } else {
-        const list = files.map((f) => `• ${f.name}\n  ${f.webViewLink}`).join("\n");
-        await sendReply(`📁 מצאתי:\n${list}`);
+      try {
+        const files = await searchDriveFiles({
+          query: classification.title || text,
+          clientName: classification.client_name,
+        });
+        if (files.length === 0) {
+          await sendReply(`לא מצאתי מסמכים שתואמים ל"${classification.title || text}"${classification.client_name ? ` עבור ${classification.client_name}` : ""}.`);
+        } else {
+          const list = files.map((f) => `• ${f.name}\n  ${f.webViewLink}`).join("\n");
+          await sendReply(`📁 מצאתי:\n${list}`);
+        }
+      } catch (err) {
+        console.error(err);
+        await sendReply(`⚠️ לא הצלחתי לחפש בדרייב - כנראה חסר חיבור לגוגל. בדוק עם המנהל.`);
       }
+      break;
+    }
+
+    case "new_charge": {
+      addCharge({
+        createdBy: senderNumber,
+        chargeType: classification.charge_type,
+        description: text,
+        amount: classification.amount ? parseFloat(classification.amount) : null,
+        clientName: classification.client_name,
+      });
+      await sendReply(`💰 החיוב נרשם!${classification.charge_type ? ` (${classification.charge_type}` : ""}${classification.client_name ? ` עבור ${classification.client_name}` : ""}${classification.amount ? `, ${classification.amount} ₪)` : classification.charge_type ? ")" : ""}`);
+      break;
+    }
+
+    case "recall_messages": {
+      const minutes = classification.since_minutes || 60;
+      const since = new Date(Date.now() - minutes * 60000);
+      const messages = getMessagesSince(since.toISOString());
+      const label = minutes >= 1440 ? `ב-${Math.round(minutes / 1440)} הימים האחרונים` : `ב-${minutes} הדקות האחרונות`;
+      const summary = await summarizeRecentMessages(messages, label);
+      await sendReply(`🕓 סיכום ${label}:\n\n${summary}`);
       break;
     }
 
@@ -74,24 +126,28 @@ export async function handleIncomingMessage({ senderNumber, text, sendReply }) {
       const since = new Date();
       since.setHours(0, 0, 0, 0);
       const tasks = listTasksSince(since.toISOString());
-      const summary = await generateSummary(tasks, "היום");
-      await sendReply(`📋 סיכום:\n\n${summary}`);
+      const charges = listChargesSince(since.toISOString());
+      const taskSummary = await generateSummary(tasks, "היום");
+      const chargeSummary = generateChargeSummary(charges);
+      await sendReply(`📋 סיכום משימות:\n\n${taskSummary}\n\n💰 חיובים:\n${chargeSummary}`);
       break;
     }
 
     case "chit_chat": {
-      // לא מפעילים מודל בכלל על סמול-טוק, חוסך טוקנים
       await sendReply("👍");
       break;
     }
 
     case "question":
     default: {
-      const answer = classification.needs_smart_model
-        ? await handleComplexRequest(text)
-        : await handleComplexRequest(text); // גם שאלות "פשוטות" עדיין דורשות ניסוח, אך אפשר להחליף למודל הזול בהמשך לפי הצורך
+      const answer = await handleComplexRequest(text);
       await sendReply(answer);
       break;
     }
   }
+}
+
+/** רישום שקט של כל הודעה בקבוצה, בלי קריאה ל-AI - חינמי לגמרי. נקרא מ-index.js לכל הודעה, גם בלי מילת ההפעלה. */
+export function logRawMessage({ senderNumber, text }) {
+  logMessage({ sender: senderNumber, body: text, intent: "raw" });
 }
