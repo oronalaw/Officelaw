@@ -45,26 +45,36 @@ export async function startWhatsApp(onMessage) {
   });
 
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
+    console.log(`🔔 messages.upsert אירוע, type=${type}, כמות=${messages.length}`);
     if (type !== "notify") return;
     for (const msg of messages) {
-      if (!msg.message || msg.key.fromMe) continue;
+      if (!msg.message || msg.key.fromMe) {
+        console.log("⏭️ הודעה מדולגת (ריקה או ממני)");
+        continue;
+      }
       const remoteJid = msg.key.remoteJid;
       const isGroup = remoteJid?.endsWith("@g.us");
       const text =
         msg.message.conversation ||
         msg.message.extendedTextMessage?.text ||
         "";
+      console.log(`📩 הודעה התקבלה: chatId=${remoteJid}, isGroup=${isGroup}, text="${text}"`);
       if (!text) continue;
 
       const senderJid = isGroup ? msg.key.participant : remoteJid;
       const senderNumber = senderJid?.split("@")[0];
+      console.log(`👤 שולח: ${senderNumber}`);
 
-      await onMessageHandler({
-        chatId: remoteJid,
-        isGroup,
-        senderNumber,
-        text: text.trim(),
-      });
+      try {
+        await onMessageHandler({
+          chatId: remoteJid,
+          isGroup,
+          senderNumber,
+          text: text.trim(),
+        });
+      } catch (err) {
+        console.error("❌ שגיאה בטיפול בהודעה:", err);
+      }
     }
   });
 
