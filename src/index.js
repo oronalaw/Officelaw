@@ -1,16 +1,15 @@
 import "dotenv/config";
 import express from "express";
-import { startWhatsApp, sendToChat, listGroups } from "./whatsapp.js";
+import QRCode from "qrcode";
+import { startWhatsApp, sendToChat, listGroups, getCurrentQR } from "./whatsapp.js";
 import { handleIncomingMessage } from "./taskHandler.js";
 import { startReminderLoop, startDailySummary, startWeeklySummary } from "./scheduler.js";
 
 async function main() {
   await startWhatsApp(async ({ chatId, isGroup, senderNumber, text }) => {
-    // רק הודעות מתוך קבוצת המשרד (או צ'אט פרטי עם משתמש מורשה, לגמישות)
     const officeGroupId = process.env.OFFICE_GROUP_ID;
     if (isGroup && officeGroupId && chatId !== officeGroupId) return;
 
-    // פקודת עזר חד פעמית: לשלוח "/קבוצות" כדי לגלות את ה-ID של קבוצת המשרד
     if (text.trim() === "/קבוצות") {
       const groups = await listGroups();
       const list = Object.entries(groups)
@@ -31,9 +30,19 @@ async function main() {
   startDailySummary();
   startWeeklySummary();
 
-  // שרת HTTP קטן, רק לבדיקת "בריאות" (למשל עבור Railway / uptime monitor)
   const app = express();
   app.get("/health", (_req, res) => res.send("ok"));
+
+  app.get("/qr", async (_req, res) => {
+    const qr = getCurrentQR();
+    if (!qr) {
+      res.send("<h2>אין QR פעיל כרגע - כנראה כבר מחובר, או שממתין. רענן בעוד רגע.</h2>");
+      return;
+    }
+    const png = await QRCode.toBuffer(qr, { width: 500, margin: 2 });
+    res.type("png").send(png);
+  });
+
   const port = process.env.PORT || 3000;
   app.listen(port, () => console.log(`Health server on :${port}`));
 }
